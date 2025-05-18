@@ -1,0 +1,1293 @@
+import tkinter as tk
+from tkinter import scrolledtext, messagebox, ttk
+import hashlib
+import threading
+from datetime import datetime
+import logging
+import random
+import speech_recognition as sr
+import pyttsx3
+from cryptography.fernet import Fernet
+import json
+import hmac
+import base64
+import os
+import re
+import time
+from queue import Queue, Empty
+from typing import Callable, Any, Optional, Tuple
+
+# MongoDB imports
+from pymongo import MongoClient
+from bson.objectid import ObjectId
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    filename='medai_pro.log',
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filemode='a'
+)
+
+class HealthAssistant:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("MedAI Pro - Advanced Health Assistant")
+        self.root.geometry("800x600")
+        self.root.minsize(600, 400)
+        self.root.configure(bg='#f0f2f5')
+        
+        # Application state
+        self.message_count = 0
+        self.max_messages_before_login = 5
+        self.logged_in = False
+        self.current_user_id = None
+        self.current_username = None
+
+        # MongoDB setup
+        self.mongo_client = MongoClient("mongodb://localhost:27017/")
+        self.db = self.mongo_client["medai_pro"]
+        self.users_col = self.db["users"]
+        self.conversations_col = self.db["conversations"]
+        
+        # Initialize components
+        self.initialize_components()
+        self.create_ui()
+        self.show_welcome_message()
+        
+        # Medical knowledge base
+        self.initialize_knowledge_base()
+        
+        # Sentiment analysis patterns
+        self.initialize_sentiment_patterns()
+
+    def initialize_components(self):
+        """Initialize all external components"""
+        try:
+            # Text-to-speech engine
+            self.tts_engine = pyttsx3.init()
+            voices = self.tts_engine.getProperty('voices')
+            if len(voices) > 1:
+                self.tts_engine.setProperty('voice', voices[1].id)  # Female voice if available
+            self.tts_engine.setProperty('rate', 150)
+            
+            # Speech recognition
+            self.voice_recognizer = sr.Recognizer()
+            self.voice_recognizer.energy_threshold = 4000
+            
+            # Encryption
+            self.cipher_suite = Fernet(Fernet.generate_key())
+            
+        except Exception as e:
+            logging.error(f"Component initialization failed: {str(e)}")
+            messagebox.showerror("Initialization Error", 
+                               "Failed to initialize required components. Check logs for details.")
+            self.root.destroy()
+    
+    def initialize_knowledge_base(self):
+        """Initialize medical knowledge base"""
+        self.greeting_responses = [
+            "Hello! How can I help you today?",
+            "Hi there! What can I do for you?",
+            "Greetings! I'm here to assist with your health questions.",
+            "Hello! Ready to help with any health concerns."
+        ]
+        
+        self.thank_you_responses = [
+            "You're welcome! Is there anything else I can help with?",
+            "My pleasure! Don't hesitate to ask if you have more questions.",
+            "You're very welcome! Feel free to ask me anything else.",
+            "Glad I could help! Let me know if you need anything more."
+        ]
+
+        self.medical_knowledge = {
+            'headache': {
+                'description': 'Pain in the head or neck area',
+                'suggestions': [
+                    'Rest in a quiet, dark room',
+                    'Apply a cool compress to your forehead',
+                    'Try over-the-counter pain relievers',
+                    'Stay hydrated'
+                ],
+                'medicines': [
+                    'Acetaminophen (Tylenol)',
+                    'Ibuprofen (Advil, Motrin)',
+                    'Aspirin',
+                    'Naproxen (Aleve)'
+                ],
+                'emergency': False
+            },
+            'fever': {
+                'description': 'Elevated body temperature, typically above 100.4°F (38°C)',
+                'suggestions': [
+                    'Drink plenty of fluids',
+                    'Rest',
+                    'Use fever-reducing medications',
+                    'Take a lukewarm bath'
+                ],
+                'medicines': [
+                    'Acetaminophen (Tylenol)',
+                    'Ibuprofen (Advil, Motrin)',
+                    'Aspirin (for adults only)'
+                ],
+                'emergency': False
+            },
+            'nausea': {
+                'description': 'Feeling of sickness with an inclination to vomit',
+                'suggestions': [
+                    'Sip clear or ice-cold drinks',
+                    'Eat light, bland foods',
+                    'Avoid fried, greasy, or sweet foods',
+                    'Try ginger tea or ginger ale'
+                ],
+                'medicines': [
+                    'Dimenhydrinate (Dramamine)',
+                    'Meclizine (Bonine)',
+                    'Diphenhydramine (Benadryl)',
+                    'Emetrol (for nausea without vomiting)'
+                ],
+                'emergency': False
+            },
+            'chest pain': {
+                'description': 'Discomfort or pain in the chest area',
+                'suggestions': [
+                    'Seek immediate medical attention',
+                    'Stop any physical activity',
+                    'Sit or lie down'
+                ],
+                'medicines': [
+                    'Nitroglycerin (if prescribed for angina)',
+                    'Aspirin (if recommended for heart attack)'
+                ],
+                'emergency': True
+            },
+            'cough': {
+                'description': 'Sudden expulsion of air from the lungs to clear throat or airway',
+                'suggestions': [
+                    'Stay hydrated with warm liquids',
+                    'Use a humidifier',
+                    'Try throat lozenges',
+                    'Avoid irritants like smoke'
+                ],
+                'medicines': [
+                    'Dextromethorphan (Robitussin DM)',
+                    'Guaifenesin (Mucinex)',
+                    'Benzonatate (Tessalon Perles)',
+                    'Codeine (prescription only)'
+                ],
+                'emergency': False
+            },
+            'sore throat': {
+                'description': 'Pain, scratchiness or irritation of the throat',
+                'suggestions': [
+                    'Gargle with warm salt water',
+                    'Drink warm liquids',
+                    'Use throat lozenges',
+                    'Rest your voice'
+                ],
+                'medicines': [
+                    'Acetaminophen or ibuprofen for pain',
+                    'Phenylephrine or pseudoephedrine (decongestants)',
+                    'Chloraseptic spray',
+                    'Cepacol lozenges'
+                ],
+                'emergency': False
+            }
+        }
+
+    def initialize_sentiment_patterns(self):
+        """Initialize sentiment analysis patterns"""
+        self.positive_responses = {
+            'good': [
+                "I'm happy to hear that you're feeling good! 😊",
+                "That's wonderful news! Keep up whatever you're doing. 🌟",
+                "Great to know you're doing well! Is there anything specific you'd like to discuss?"
+            ],
+            'fine': [
+                "I'm glad you're feeling fine today. 😊",
+                "That's good to hear! Let me know if there's anything I can help with."
+            ],
+            'well': [
+                "It's great that you're feeling well! 👍",
+                "Wonderful! Maintaining good health is so important."
+            ],
+            'happy': [
+                "Happiness is so important for health! 😄",
+                "That's fantastic! Positive emotions contribute to overall wellbeing."
+            ],
+            'better': [
+                "I'm so glad you're feeling better! 🎉",
+                "That's excellent progress! Whatever you're doing seems to be working."
+            ]
+        }
+        
+        self.negative_responses = {
+            'bad': [
+                "I'm sorry to hear you're feeling bad. 😔",
+                "That sounds difficult. Would you like to talk more about what's bothering you?",
+                "I'm here to help. Can you tell me more about why you're feeling bad?"
+            ],
+            'not good': [
+                "I'm sorry you're not feeling good. What's troubling you?",
+                "That must be hard. Would you like to share more about how you're feeling?"
+            ],
+            'terrible': [
+                "I'm so sorry you're feeling terrible. 😟",
+                "That sounds really difficult. Would you like to talk about what's going on?",
+                "I'm here to listen. Can you tell me more about what's making you feel terrible?"
+            ],
+            'awful': [
+                "I'm sorry you're feeling awful. That must be really hard. 😔",
+                "That sounds very difficult. Would you like to talk more about it?"
+            ],
+            'sad': [
+                "I'm sorry you're feeling sad. 😔",
+                "It's okay to feel sad sometimes. Would you like to talk about what's on your mind?",
+                "I'm here to listen if you'd like to share what's making you feel sad."
+            ],
+            'depressed': [
+                "I'm sorry you're feeling depressed. That can be really difficult. 😔",
+                "Depression can be very hard to deal with. Have you considered talking to a professional about how you're feeling?",
+                "I'm here to listen, but please know that professional help is available if you need it."
+            ]
+        }
+        
+        self.negation_words = ['not', 'no', 'never', 'none', 'nobody', 'nothing', 
+                              'neither', 'nor', 'nowhere', 'hardly', 'scarcely', 
+                              'barely', 'doesnt', 'isnt', 'wasnt', 'shouldnt', 
+                              'wouldnt', 'couldnt', 'wont', 'cant', 'dont']
+        
+        self.positive_words = ['good', 'great', 'excellent', 'awesome', 'wonderful',
+                              'fantastic', 'amazing', 'happy', 'joyful', 'pleased',
+                              'content', 'satisfied', 'delighted', 'ecstatic', 'thrilled',
+                              'better', 'well', 'fine', 'okay', 'alright', 'positive']
+        
+        self.negative_words = ['bad', 'terrible', 'awful', 'horrible', 'sad', 'depressed',
+                              'angry', 'upset', 'frustrated', 'annoyed', 'irritated',
+                              'miserable', 'unhappy', 'disappointed', 'heartbroken',
+                              'anxious', 'stressed', 'worried', 'scared', 'frightened',
+                              'fearful', 'pain', 'hurt', 'sick', 'ill', 'unwell','not feeling well']
+
+    def create_ui(self):
+        """Create the main user interface"""
+        self.setup_main_frame()
+        self.setup_header()
+        self.setup_chat_display()
+        self.setup_input_area()
+    
+    def setup_main_frame(self):
+        """Configure the main application frame"""
+        self.main_frame = tk.Frame(self.root, bg='#f0f2f5')
+        self.main_frame.pack(fill='both', expand=True, padx=5, pady=5)
+    
+    def setup_header(self):
+        """Create the application header"""
+        header_frame = tk.Frame(self.main_frame, bg='#ffffff', height=70)
+        header_frame.pack(fill='x', pady=(0, 10))
+        header_frame.pack_propagate(False)
+        
+        # Application title
+        tk.Label(
+            header_frame,
+            text="MedAI Pro",
+            font=('Arial', 18, 'bold'),
+            bg='#ffffff',
+            fg='#2c3e50'
+        ).pack(side='left', padx=20)
+        
+        # User status area
+        self.user_status_frame = tk.Frame(header_frame, bg='#ffffff')
+        self.user_status_frame.pack(side='right', padx=20)
+        
+        self.login_button = tk.Button(
+            self.user_status_frame,
+            text="Login",
+            command=self.show_auth_dialog,
+            bg='#3498db',
+            fg='white',
+            font=('Arial', 12),
+            padx=15
+        )
+        self.login_button.pack(side='left')
+        
+        self.user_label = tk.Label(
+            self.user_status_frame,
+            text="Guest",
+            font=('Arial', 12),
+            bg='#ffffff',
+            fg='#7f8c8d'
+        )
+        self.user_label.pack(side='left', padx=10)
+    
+    def setup_chat_display(self):
+        """Configure the chat display area"""
+        self.chat_display = scrolledtext.ScrolledText(
+            self.main_frame,
+            wrap=tk.WORD,
+            state='disabled',
+            font=('Arial', 12),
+            bg='#ffffff',
+            fg='#2c3e50',
+            padx=15,
+            pady=15,
+            borderwidth=0,
+            insertbackground='#3498db'
+        )
+        self.chat_display.pack(fill='both', expand=True)
+        
+        # Configure message styling
+        self.configure_message_tags()
+    
+    def configure_message_tags(self):
+        """Set up text tags for different message types"""
+        self.chat_display.tag_config('assistant', foreground='#2c3e50', lmargin1=20, rmargin=20)
+        self.chat_display.tag_config('user', foreground='#3498db', lmargin1=20, rmargin=20, justify='right')
+        self.chat_display.tag_config('system', foreground='#7f8c8d', font=('Arial', 10))
+        self.chat_display.tag_config('emergency', foreground='#e74c3c', font=('Arial', 12, 'bold'))
+        self.chat_display.tag_config('warning', foreground='#f39c12')
+        self.chat_display.tag_config('timestamp', foreground='#95a5a6', font=('Arial', 9))
+        self.chat_display.tag_config('divider', foreground='#ecf0f1')
+        self.chat_display.tag_config('empathy', foreground='#9b59b6', font=('Arial', 12, 'italic'))
+    
+    def setup_input_area(self):
+        """Create the message input area"""
+        input_frame = tk.Frame(self.main_frame, bg='#f0f2f5')
+        input_frame.pack(fill='x', pady=(10, 0))
+        
+        # Message entry
+        self.user_input = tk.Entry(
+            input_frame,
+            font=('Arial', 12),
+            bg='#ffffff',
+            fg='#2c3e50',
+            insertbackground='#3498db',
+            relief=tk.FLAT
+        )
+        self.user_input.pack(
+            side='left',
+            fill='x',
+            expand=True,
+            padx=(0, 5),
+            ipady=8
+        )
+        self.user_input.bind('<Return>', self.process_input)
+        
+        # Send button
+        tk.Button(
+            input_frame,
+            text="Send",
+            command=self.process_input,
+            bg='#3498db',
+            fg='white',
+            font=('Arial', 12),
+            relief=tk.FLAT,
+            activebackground='#2980b9'
+        ).pack(side='right')
+        
+        # Voice input button
+        tk.Button(
+            input_frame,
+            text="🎤",
+            command=self.start_voice_input,
+            bg='#9b59b6',
+            fg='white',
+            width=3,
+            font=('Arial', 12),
+            relief=tk.FLAT,
+            activebackground='#8e44ad'
+        ).pack(side='right', padx=5)
+    
+    def load_conversation_history(self):
+        """Load and display the full conversation history from MongoDB."""
+        try:
+            if not self.logged_in or not self.current_user_id:
+                self.add_message("System", "No messages found in conversation history.", tag='system', speak=False)
+                return
+            messages = list(self.conversations_col.find(
+                {"user_id": self.current_user_id}
+            ).sort("timestamp", 1))  # 1 for oldest to newest
+            if not messages:
+                self.add_message("System", "No messages found in conversation history.", tag='system', speak=False)
+            else:
+                for msg in messages:
+                    time_str = msg["timestamp"].strftime("%H:%M") if isinstance(msg["timestamp"], datetime) else str(msg["timestamp"])
+                    sender = msg["sender"].capitalize()
+                    message = msg["message"]
+                    self.chat_display.config(state='normal')
+                    self.chat_display.insert(tk.END, f"[{time_str}] {sender}: {message}\n", 'assistant' if sender != 'You' else 'user')
+                    self.chat_display.config(state='disabled')
+                    self.chat_display.see(tk.END)
+        except Exception as e:
+            logging.error(f"Failed to load conversation history: {str(e)}")
+            self.add_message("System", "Error loading conversation history.", tag='warning', speak=False)
+
+    def show_welcome_message(self):
+        """Display welcome message when app starts and load conversation history."""
+        welcome_messages = [
+            "👋 Hello! I'm your health assistant. How can I help you today?",
+            "👋 Hi there! Ready to assist with your health questions.",
+            "👋 Welcome to MedAI Pro. How are you feeling today?"
+        ]
+
+        self.add_message(
+            "Health Assistant",
+            random.choice(welcome_messages),
+            tag='assistant'
+        )
+
+        # Load conversation history
+        self.load_conversation_history()
+    
+    def add_message(self, sender, message, tag=None, speak=True):
+        """Add a message to the chat display with proper formatting"""
+        self.chat_display.config(state='normal')
+        
+        # Add timestamp
+        timestamp = datetime.now().strftime("%H:%M")
+        self.chat_display.insert(tk.END, f"[{timestamp}] ", 'timestamp')
+        
+        # Determine message styling
+        if tag:
+            message_tag = tag
+        elif sender == "You":
+            message_tag = 'user'
+        elif sender == "System":
+            message_tag = 'system'
+        else:
+            message_tag = 'assistant'
+        
+        # Add the message
+        self.chat_display.insert(tk.END, f"{sender}: {message}\n", message_tag)
+        
+        # Add divider
+        self.chat_display.insert(tk.END, "-"*50 + "\n", 'divider')
+        
+        self.chat_display.config(state='disabled')
+        self.chat_display.see(tk.END)
+        
+        # Speak assistant messages aloud
+        if speak and sender != "You" and sender != "System":
+            threading.Thread(
+                target=self.speak,
+                args=(message,),
+                daemon=True
+            ).start()
+        
+        # Save to database if logged in and it's a user or assistant message
+        if self.logged_in and sender in ("You", "Health Assistant"):
+            self.save_message_to_db(sender, message)
+
+    def save_message_to_db(self, sender, message):
+        """Save conversation to MongoDB"""
+        try:
+            if not self.logged_in or not self.current_user_id:
+                logging.debug("Not saving message - no logged in user")
+                return
+            self.conversations_col.insert_one({
+                "user_id": self.current_user_id,
+                "message": message,
+                "sender": sender,
+                "timestamp": datetime.now()
+            })
+            logging.debug(f"Message saved successfully: {sender}: {message[:50]}...")
+        except Exception as e:
+            error_msg = f"Unexpected error saving message: {str(e)}"
+            logging.error(error_msg)
+            print(error_msg)
+            self.add_message(
+                "System",
+                "Failed to save conversation history to database",
+                tag='warning',
+                speak=False
+            )
+
+    def process_input(self, event=None):
+        """Process user input from text or voice"""
+        user_text = self.user_input.get().strip()
+        if not user_text:
+            return
+        
+        # Check message limit for guests
+        if not self.logged_in and self.message_count >= self.max_messages_before_login:
+            self.add_message(
+                "System",
+                f"Guest message limit reached. Please login to continue.",
+                tag='warning'
+            )
+            self.show_auth_dialog()
+            return
+        
+        self.user_input.delete(0, tk.END)
+        self.add_message("You", user_text)
+        self.message_count += 1
+        
+        # Process in background to keep UI responsive
+        threading.Thread(
+            target=self.generate_response,
+            args=(user_text,),
+            daemon=True
+        ).start()
+    
+    def analyze_sentiment(self, text):
+        """Analyze text for positive or negative sentiment"""
+        lower_text = text.lower()
+        # Check for common negative phrases first
+        negative_phrases = ['not feeling well', 'not doing well', 'not good', 'not okay', 'not well', 'not fine', 'not happy', 'not great']
+        for phrase in negative_phrases:
+            if phrase in lower_text:
+                return {
+                    'sentiment': 'negative',
+                    'word': phrase,
+                    'is_negated': False
+                }
+        # Check for negative words
+        for negative_word in self.negative_words:
+            if negative_word in lower_text:
+                for negation in self.negation_words:
+                    if f"{negation} {negative_word}" in lower_text:
+                        return {
+                            'sentiment': 'positive',
+                            'word': f"{negation} {negative_word}",
+                            'is_negated': True
+                        }
+                return {
+                    'sentiment': 'negative',
+                    'word': negative_word,
+                    'is_negated': False
+                }
+        # Check for positive words
+        for positive_word in self.positive_words:
+            if positive_word in lower_text:
+                for negation in self.negation_words:
+                    if f"{negation} {positive_word}" in lower_text:
+                        return {
+                            'sentiment': 'negative',
+                            'word': f"{negation} {positive_word}",
+                            'is_negated': True
+                        }
+                return {
+                    'sentiment': 'positive',
+                    'word': positive_word,
+                    'is_negated': False
+                }
+        # Default to neutral if no sentiment detected
+        return {
+            'sentiment': 'neutral',
+            'word': None,
+            'is_negated': False
+        }
+    
+    def generate_response(self, user_input):
+        """Generate appropriate response to user input"""
+        try:
+            lower_input = user_input.lower()
+            
+            # Handle empty input
+            if not user_input.strip():
+                return "I didn't receive any input. Could you please repeat your question?"
+                
+            # Handle greetings
+            if any(greeting in lower_input for greeting in ['hi', 'hello', 'hey']):
+                response = random.choice(self.greeting_responses)
+                self.add_message("Health Assistant", response)
+                return
+                
+            # Handle thanks
+            if any(thanks in lower_input for thanks in ['thank', 'thanks', 'appreciate']):
+                response = random.choice(self.thank_you_responses)
+                self.add_message("Health Assistant", response)
+                return
+            
+            # Handle capability questions
+            if 'what can you do' in lower_input:
+                self.add_message("Health Assistant", self.describe_capabilities())
+                return
+                
+            # Handle help requests
+            if 'help' in lower_input:
+                self.add_message("Health Assistant", self.provide_help())
+                return
+            
+            # First analyze sentiment
+            sentiment = self.analyze_sentiment(user_input)
+            
+            # Handle positive sentiment
+            if sentiment['sentiment'] == 'positive' and not sentiment['is_negated']:
+                if sentiment['word'] in self.positive_responses:
+                    response = random.choice(self.positive_responses[sentiment['word']])
+                    self.add_message("Health Assistant", response)
+                    return
+                else:
+                    response = random.choice([
+                        "That's great to hear! 😊",
+                        "I'm glad you're feeling positive!",
+                        "Wonderful! How can I help you today?"
+                    ])
+                    self.add_message("Health Assistant", response)
+                    return
+            
+            # Handle negative sentiment
+            if sentiment['sentiment'] == 'negative' or (sentiment['sentiment'] == 'positive' and sentiment['is_negated']):
+                if sentiment['word'] in self.negative_responses:
+                    response = random.choice(self.negative_responses[sentiment['word']])
+                    self.add_message("Health Assistant", response, tag='empathy')
+                    return
+                else:
+                    response = random.choice([
+                        "I'm sorry to hear that. 😔 Would you like to talk about what's bothering you?",
+                        "That sounds difficult. I'm here to listen if you'd like to share more.",
+                        "I'm sorry you're feeling this way. Can you tell me more about what's going on?"
+                    ])
+                    self.add_message("Health Assistant", response, tag='empathy')
+                    return
+            
+            # If no sentiment detected, proceed with regular analysis
+            analysis = self.analyze_input(user_input.lower())
+            
+            # Generate response based on analysis
+            try:
+                if analysis['is_emergency']:
+                    response = self.handle_emergency(analysis)
+                elif analysis.get('intent') == 'medication_advice':
+                    response = self.handle_medication_advice(analysis)
+                elif analysis['intent'] == 'symptom':
+                    response = self.handle_symptom(analysis)
+                elif analysis['intent'] == 'medication':
+                    response = self.handle_medication(analysis)
+                elif analysis['intent'] == 'appointment':
+                    response = self.handle_appointment()
+                elif analysis['intent'] == 'general_health':
+                    response = self.handle_general_health(analysis)
+                elif analysis['intent'] == 'nutrition':
+                    response = self.handle_nutrition(analysis)
+                elif analysis['intent'] == 'exercise':
+                    response = self.handle_exercise(analysis)
+                elif analysis['intent'] == 'mental_health':
+                    response = self.handle_mental_health(analysis)
+                else:
+                    response = self.handle_general_query(user_input)
+                
+                self.add_message("Health Assistant", response)
+                
+            except Exception as e:
+                logging.error(f"Error generating specific response: {str(e)}")
+                self.add_message(
+                    "Health Assistant",
+                    "I'm having trouble understanding your request. Could you please rephrase or provide more details?",
+                    tag='warning'
+                )
+                
+        except Exception as e:
+            logging.error(f"Response generation failed: {str(e)}")
+            self.add_message(
+                "Health Assistant",
+                "I encountered an unexpected error. Please try again with a different request.",
+                tag='warning'
+            )
+    
+    def describe_capabilities(self):
+        """Describe what the assistant can do"""
+        return (
+            "I can help with:\n"
+            "- Symptom analysis and basic advice\n"
+            "- Medication information\n"
+            "- General health questions\n"
+            "- Nutrition and exercise guidance\n"
+            "- Mental health information\n"
+            "- Appointment booking guidance\n\n"
+            "Try asking about specific symptoms or health topics!"
+        )
+
+    def provide_help(self):
+        """Provide help instructions"""
+        return (
+            "Here's how to use me effectively:\n"
+            "1. Describe symptoms clearly (e.g., 'I have a headache')\n"
+            "2. Ask about medications (e.g., 'What is ibuprofen for?')\n"
+            "3. Request general health information\n"
+            "4. Use the microphone button for voice input\n\n"
+            "For emergencies, say words like 'emergency' or 'help' immediately."
+        )
+    
+    def analyze_input(self, text):
+        """Analyze user input for intent and entities with enhanced keyword recognition"""
+        lower_text = text.lower()
+        
+        # Check for medication advice requests first
+        medication_advice_patterns = [
+            r'shall i take (.*) for (.*)',
+            r'can i take (.*) for (.*)',
+            r'is (.*) good for (.*)',
+            r'should i take (.*) for (.*)',
+            r'can (.*) be taken for (.*)',
+            r'is it safe to take (.*) for (.*)',
+            r'would (.*) help with (.*)',
+            r'can (.*) treat (.*)',
+            r'does (.*) work for (.*)',
+            r'will (.*) help (.*)'
+        ]
+        
+        for pattern in medication_advice_patterns:
+            match = re.search(pattern, lower_text)
+            if match:
+                medication = match.group(1).strip()
+                symptom = match.group(2).strip()
+                return {
+                    'intent': 'medication_advice',
+                    'medication': medication,
+                    'symptom': symptom,
+                    'is_emergency': False
+                }
+        
+        # Check for emergency keywords
+        emergency_keywords = [
+            'emergency', 'heart attack', 'stroke', 'chest pain', 'severe pain',
+            'can\'t breathe', 'difficulty breathing', 'choking', 'unconscious',
+            'bleeding heavily', 'broken bone', 'burn', 'poison', 'suicide',
+            'help me', '911', 'call ambulance', 'urgent', 'life threatening'
+        ]
+        
+        if any(keyword in lower_text for keyword in emergency_keywords):
+            return {
+                'intent': 'emergency',
+                'is_emergency': True
+            }
+        
+        # Check for symptom-related queries
+        symptom_keywords = [
+            'headache', 'fever', 'cough', 'sore throat', 'nausea', 'vomiting',
+            'diarrhea', 'constipation', 'rash', 'itch', 'pain', 'ache',
+            'dizziness', 'fatigue', 'weakness', 'swelling', 'bleeding',
+            'bruise', 'injury', 'stomach ache', 'back pain', 'joint pain',
+            'allergy', 'allergic reaction', 'sneeze', 'runny nose',
+            'congestion', 'shortness of breath', 'wheeze'
+        ]
+        
+        found_symptoms = [symptom for symptom in symptom_keywords if symptom in lower_text]
+        if found_symptoms:
+            return {
+                'intent': 'symptom',
+                'symptoms': found_symptoms,
+                'is_emergency': False
+            }
+        
+        # Check for medication queries
+        medication_keywords = [
+            'medicine', 'medication', 'pill', 'drug', 'ibuprofen', 'acetaminophen',
+            'aspirin', 'tylenol', 'advil', 'aleve', 'benadryl', 'pepto',
+            'antacid', 'antibiotic', 'prescription', 'dose', 'dosage',
+            'side effect', 'interaction'
+        ]
+        
+        if any(keyword in lower_text for keyword in medication_keywords):
+            return {
+                'intent': 'medication',
+                'is_emergency': False
+            }
+        
+        # Check for appointment requests
+        appointment_keywords = [
+            'appointment', 'schedule', 'doctor', 'physician', 'clinic',
+            'hospital', 'see a doctor', 'make an appointment', 'book',
+            'availability', 'when can i see'
+        ]
+        
+        if any(keyword in lower_text for keyword in appointment_keywords):
+            return {
+                'intent': 'appointment',
+                'is_emergency': False
+            }
+        
+        # Check for general health questions
+        general_health_keywords = [
+            'healthy', 'health', 'wellness', 'prevention', 'vaccine',
+            'immunization', 'checkup', 'physical', 'exam', 'screening',
+            'test', 'results', 'diagnosis', 'condition', 'disease',
+            'illness', 'infection'
+        ]
+        
+        if any(keyword in lower_text for keyword in general_health_keywords):
+            return {
+                'intent': 'general_health',
+                'is_emergency': False
+            }
+        
+        # Check for nutrition questions
+        nutrition_keywords = [
+            'diet', 'nutrition', 'food', 'eat', 'drink', 'vitamin',
+            'mineral', 'supplement', 'calorie', 'protein', 'carb',
+            'fat', 'fiber', 'water', 'hydrate', 'dehydrate',
+            'healthy eating', 'meal plan', 'weight loss', 'weight gain'
+        ]
+        
+        if any(keyword in lower_text for keyword in nutrition_keywords):
+            return {
+                'intent': 'nutrition',
+                'is_emergency': False
+            }
+        
+        # Check for exercise questions
+        exercise_keywords = [
+            'exercise', 'workout', 'fitness', 'physical activity',
+            'running', 'walking', 'swimming', 'cycling', 'yoga',
+            'strength training', 'cardio', 'stretch', 'flexibility',
+            'endurance', 'recovery', 'rest', 'active', 'sedentary'
+        ]
+        
+        if any(keyword in lower_text for keyword in exercise_keywords):
+            return {
+                'intent': 'exercise',
+                'is_emergency': False
+            }
+        
+        # Check for mental health questions
+        mental_health_keywords = [
+            'mental health', 'depression', 'anxiety', 'stress',
+            'panic attack', 'mental illness', 'therapy', 'counseling',
+            'psychologist', 'psychiatrist', 'mental', 'emotional',
+            'feeling', 'mood', 'sad', 'happy', 'angry', 'frustrated',
+            'overwhelmed', 'trauma', 'PTSD', 'bipolar', 'schizophrenia',
+            'OCD', 'ADHD', 'autism', 'suicidal', 'self-harm'
+        ]
+        
+        if any(keyword in lower_text for keyword in mental_health_keywords):
+            return {
+                'intent': 'mental_health',
+                'is_emergency': False
+            }
+        
+        # Default to general query if no specific intent detected
+        return {
+            'intent': 'general_query',
+            'is_emergency': False
+        }
+
+    def handle_emergency(self, analysis):
+        """Handle emergency situations"""
+        emergency_instructions = (
+            "🚨 EMERGENCY ALERT 🚨\n"
+            "Based on your message, this appears to be a medical emergency.\n\n"
+            "1. Call emergency services immediately (911 or local emergency number)\n"
+            "2. If you're with someone, have them stay with you\n"
+            "3. Don't try to drive yourself to the hospital\n"
+            "4. If you're alone, unlock your door for emergency responders\n\n"
+            "I've alerted your emergency contacts if you have them set up."
+        )
+        
+        # Try to notify emergency contacts if user is logged in
+        if self.logged_in and self.current_user_id:
+            try:
+                user_doc = self.users_col.find_one({"_id": ObjectId(self.current_user_id)})
+                contacts = user_doc.get("emergency_contacts", [])
+                for contact in contacts:
+                    logging.info(f"Notified emergency contact: {contact.get('name')} ({contact.get('phone')})")
+            except Exception as e:
+                logging.error(f"Failed to notify emergency contacts: {str(e)}")
+        
+        return emergency_instructions
+
+    def handle_medication_advice(self, analysis):
+        """Provide advice about taking specific medications for symptoms"""
+        medication = analysis.get('medication', '').lower()
+        symptom = analysis.get('symptom', '').lower()
+        
+        # Check if the symptom is in our knowledge base
+        symptom_info = None
+        for known_symptom, info in self.medical_knowledge.items():
+            if known_symptom in symptom:
+                symptom_info = info
+                break
+        
+        if not symptom_info:
+            return f"I'm not sure about using {medication} for {symptom}. It's best to consult a doctor for proper medical advice."
+        
+        # Check if the medication is recommended for this symptom
+        recommended_meds = [m.lower() for m in symptom_info.get('medicines', [])]
+        medication_match = any(med in medication for med in recommended_meds) or any(med in med.lower() for med in recommended_meds)
+        
+        if medication_match:
+            return (
+                f"Yes, {medication} can be used for {symptom}.\n"
+                f"Recommendations:\n"
+                f"- {symptom_info['description']}\n"
+                f"- Suggested treatments: {', '.join(symptom_info['suggestions'])}\n"
+                "Always follow dosage instructions and consult a doctor if symptoms persist."
+            )
+        else:
+            return (
+                f"{medication} is not typically recommended for {symptom}.\n"
+                f"For {symptom}, consider these options instead:\n"
+                f"- {', '.join(symptom_info['medicines'])}\n"
+                "Always consult a doctor or pharmacist before taking any medication."
+            )
+
+    def handle_symptom(self, analysis):
+        """Provide information about symptoms"""
+        symptoms = analysis.get('symptoms', [])
+        responses = []
+        
+        for symptom in symptoms:
+            if symptom in self.medical_knowledge:
+                info = self.medical_knowledge[symptom]
+                response = (
+                    f"Information about {symptom}:\n"
+                    f"- Description: {info['description']}\n"
+                    f"- Suggestions: {', '.join(info['suggestions'])}\n"
+                    f"- Medications: {', '.join(info['medicines'])}\n"
+                )
+                if info['emergency']:
+                    response += "⚠ This could be serious. Seek medical attention if severe.\n"
+                responses.append(response)
+            else:
+                responses.append(
+                    f"I don't have specific information about {symptom}. "
+                    "It's best to consult a healthcare professional for proper evaluation."
+                )
+        
+        return "\n".join(responses)
+
+    def handle_medication(self, analysis):
+        """Provide information about medications"""
+        # In a full implementation, this would query a medication database
+        return (
+            "For accurate medication information:\n"
+            "1. Always consult with a doctor or pharmacist\n"
+            "2. Read the medication guide provided with your prescription\n"
+            "3. Be aware of potential side effects and interactions\n"
+            "4. Never share prescription medications with others\n\n"
+            "You can ask me about specific medications (e.g., 'What is ibuprofen used for?')"
+        )
+
+    def handle_appointment(self):
+        """Provide guidance on scheduling appointments"""
+        return (
+            "To schedule a medical appointment:\n"
+            "1. Contact your healthcare provider's office\n"
+            "2. Have your insurance information ready\n"
+            "3. Be prepared to describe your symptoms\n"
+            "4. Ask about telehealth options if available\n\n"
+            "For urgent but non-emergency issues, consider urgent care clinics."
+        )
+
+    def handle_general_health(self, analysis):
+        """Provide general health information"""
+        return (
+            "General health tips:\n"
+            "1. Get regular check-ups and screenings\n"
+            "2. Maintain a balanced diet and stay hydrated\n"
+            "3. Exercise regularly (150 minutes/week recommended)\n"
+            "4. Get 7-9 hours of sleep nightly\n"
+            "5. Manage stress through relaxation techniques\n"
+            "6. Avoid smoking and limit alcohol consumption\n"
+            "7. Practice good hygiene and hand washing\n\n"
+            "You can ask me about specific health topics for more information."
+        )
+
+    def handle_nutrition(self, analysis):
+        """Provide nutrition advice"""
+        return (
+            "Nutrition recommendations:\n"
+            "1. Eat a variety of fruits and vegetables (5+ servings/day)\n"
+            "2. Choose whole grains over refined grains\n"
+            "3. Include lean proteins (fish, poultry, beans, nuts)\n"
+            "4. Limit added sugars and saturated fats\n"
+            "5. Watch portion sizes\n"
+            "6. Stay hydrated with water (about 8 cups/day)\n"
+            "7. Limit processed foods and sodium intake\n\n"
+            "Specific dietary needs may vary - consult a nutritionist for personalized advice."
+        )
+
+    def handle_exercise(self, analysis):
+        """Provide exercise recommendations"""
+        return (
+            "Exercise guidelines:\n"
+            "1. Aim for 150 minutes of moderate activity or 75 minutes of vigorous activity weekly\n"
+            "2. Include strength training 2+ days/week\n"
+            "3. Incorporate flexibility and balance exercises\n"
+            "4. Start slowly if you're new to exercise\n"
+            "5. Choose activities you enjoy to stay motivated\n"
+            "6. Listen to your body and rest when needed\n"
+            "7. Stay hydrated and use proper equipment\n\n"
+            "Always consult a doctor before starting a new exercise program, especially if you have health concerns."
+        )
+
+    def handle_mental_health(self, analysis):
+        """Provide mental health information and resources"""
+        return (
+            "Mental health is just as important as physical health. Here are some resources:\n"
+            "1. Talk to a trusted friend or family member\n"
+            "2. Consider professional counseling or therapy\n"
+            "3. Practice stress-reduction techniques (meditation, deep breathing)\n"
+            "4. Maintain a regular sleep schedule\n"
+            "5. Stay connected with supportive people\n"
+            "6. Limit alcohol and avoid drugs\n"
+            "7. Get regular physical activity\n\n"
+            "If you're in crisis or having suicidal thoughts, please call the National Suicide Prevention Lifeline at 1-800-273-8255 or your local emergency number immediately."
+        )
+
+    def handle_general_query(self, query):
+        """Handle general queries that don't fit specific categories"""
+        return (
+            "I'm not entirely sure how to respond to that. As a health assistant, I can help with:\n"
+            "- Symptom information\n"
+            "- Medication questions\n"
+            "- General health advice\n"
+            "- Nutrition and exercise guidance\n"
+            "- Mental health resources\n\n"
+            "Could you please rephrase your question or ask about a specific health topic?"
+        )
+
+    def start_voice_input(self):
+        """Start voice input using microphone"""
+        self.add_message("System", "Listening... Speak now", tag='system', speak=False)
+        
+        def recognize_thread():
+            try:
+                with sr.Microphone() as source:
+                    self.voice_recognizer.adjust_for_ambient_noise(source)
+                    audio = self.voice_recognizer.listen(source, timeout=5)
+                
+                text = self.voice_recognizer.recognize_google(audio)
+                self.root.after(0, lambda: self.process_voice_input(text))
+            except sr.WaitTimeoutError:
+                self.root.after(0, lambda: self.add_message(
+                    "System",
+                    "Voice input timed out. Please try again.",
+                    tag='warning',
+                    speak=False
+                ))
+            except sr.UnknownValueError:
+                self.root.after(0, lambda: self.add_message(
+                    "System",
+                    "Could not understand audio. Please try again.",
+                    tag='warning',
+                    speak=False
+                ))
+            except Exception as e:
+                logging.error(f"Voice recognition failed: {str(e)}")
+                self.root.after(0, lambda: self.add_message(
+                    "System",
+                    "Error in voice recognition. Please try typing instead.",
+                    tag='warning',
+                    speak=False
+                ))
+        
+        threading.Thread(target=recognize_thread, daemon=True).start()
+
+    def process_voice_input(self, text):
+        """Process recognized voice input"""
+        self.add_message("System", f"Recognized: {text}", tag='system', speak=False)
+        self.user_input.delete(0, tk.END)
+        self.user_input.insert(0, text)
+        self.process_input()
+
+    def speak(self, text):
+        """Speak text using text-to-speech"""
+        try:
+            self.tts_engine.say(text)
+            self.tts_engine.runAndWait()
+        except Exception as e:
+            logging.error(f"Text-to-speech failed: {str(e)}")
+
+    def show_auth_dialog(self, mode='login'):
+        """Show authentication dialog (login or signup)"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Login" if mode == 'login' else "Sign Up")
+        dialog.geometry("400x300")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        
+        tk.Label(
+            dialog,
+            text="Username:",
+            font=('Arial', 12)
+        ).pack(pady=(20, 5))
+        
+        username_entry = tk.Entry(
+            dialog,
+            font=('Arial', 12)
+        )
+        username_entry.pack()
+        
+        tk.Label(
+            dialog,
+            text="Password:",
+            font=('Arial', 12)
+        ).pack(pady=(10, 5))
+        
+        password_entry = tk.Entry(
+            dialog,
+            font=('Arial', 12),
+            show="*"
+        )
+        password_entry.pack()
+        
+        if mode == 'signup':
+            tk.Label(
+                dialog,
+                text="Email:",
+                font=('Arial', 12)
+            ).pack(pady=(10, 5))
+            
+            email_entry = tk.Entry(
+                dialog,
+                font=('Arial', 12)
+            )
+            email_entry.pack()
+        
+        error_label = tk.Label(
+            dialog,
+            text="",
+            fg='red',
+            font=('Arial', 10)
+        )
+        error_label.pack(pady=10)
+        
+        def submit():
+            username = username_entry.get().strip()
+            password = password_entry.get().strip()
+            
+            if not username or not password:
+                error_label.config(text="Username and password are required")
+                return
+            
+            if mode == 'signup':
+                email = email_entry.get().strip()
+                if not email or '@' not in email:
+                    error_label.config(text="Valid email is required")
+                    return
+                
+                success, message = self.signup_user(username, email, password)
+                if success:
+                    dialog.destroy()
+                    self.add_message(
+                        "System",
+                        f"Account created successfully! Welcome {username}",
+                        tag='system'
+                    )
+                else:
+                    error_label.config(text=message)
+            else:
+                success, message = self.login_user(username, password)
+                if success:
+                    dialog.destroy()
+                    self.add_message(
+                        "System",
+                        f"Login successful! Welcome back {username}",
+                        tag='system'
+                    )
+                else:
+                    error_label.config(text=message)
+        
+        tk.Button(
+            dialog,
+            text="Submit",
+            command=submit,
+            font=('Arial', 12),
+            width=15
+        ).pack(pady=10)
+        
+        # Switch between login and signup
+        switch_text = "Sign up instead" if mode == 'login' else "Login instead"
+        switch_mode = 'signup' if mode == 'login' else 'login'
+        
+        tk.Button(
+            dialog,
+            text=switch_text,
+            command=lambda: [dialog.destroy(), self.show_auth_dialog(switch_mode)],
+            font=('Arial', 10),
+            fg='blue',
+            borderwidth=0
+        ).pack()
+
+    def hash_password(self, password, salt=None):
+        """Hash password with salt using PBKDF2"""
+        if not salt:
+            salt = os.urandom(16)
+        else:
+            salt = base64.b64decode(salt)
+        
+        key = hashlib.pbkdf2_hmac(
+            'sha256',
+            password.encode('utf-8'),
+            salt,
+            100000
+        )
+        
+        return base64.b64encode(key).decode('utf-8'), base64.b64encode(salt).decode('utf-8')
+
+    def signup_user(self, username, email, password):
+        """Register a new user in MongoDB"""
+        try:
+            if self.users_col.find_one({"$or": [{"username": username}, {"email": email}]}):
+                return False, "Username or email already exists"
+            password_hash, salt = self.hash_password(password)
+            user_doc = {
+                "username": username,
+                "email": email,
+                "password_hash": password_hash,
+                "salt": salt,
+                "created_at": datetime.now(),
+                "last_login": None,
+                "emergency_contacts": []
+            }
+            result = self.users_col.insert_one(user_doc)
+            self.logged_in = True
+            self.current_user_id = str(result.inserted_id)
+            self.current_username = username
+            self.user_label.config(text=username)
+            self.login_button.config(text="Logout", command=self.logout_user)
+            return True, "Signup successful"
+        except Exception as e:
+            logging.error(f"Signup failed: {str(e)}")
+            return False, "Database error during signup"
+
+    def login_user(self, username, password):
+        """Authenticate existing user in MongoDB"""
+        try:
+            user_doc = self.users_col.find_one({"username": username})
+            if not user_doc:
+                return False, "Invalid username or password"
+            input_hash, _ = self.hash_password(password, user_doc["salt"])
+            if input_hash != user_doc["password_hash"]:
+                return False, "Invalid username or password"
+            self.logged_in = True
+            self.current_user_id = str(user_doc["_id"])
+            self.current_username = user_doc["username"]
+            self.user_label.config(text=user_doc["username"])
+            self.login_button.config(text="Logout", command=self.logout_user)
+            self.users_col.update_one(
+                {"_id": user_doc["_id"]},
+                {"$set": {"last_login": datetime.now()}}
+            )
+            return True, "Login successful"
+        except Exception as e:
+            logging.error(f"Login failed: {str(e)}")
+            return False, "Database error during login"
+
+    def logout_user(self):
+        """Log out the current user"""
+        self.logged_in = False
+        self.current_user_id = None
+        self.current_username = None
+        self.user_label.config(text="Guest")
+        self.login_button.config(text="Login", command=self.show_auth_dialog)
+        self.add_message("System", "You have been logged out", tag='system')
+
+    def cleanup(self):
+        """Clean up resources before closing"""
+        if hasattr(self, 'tts_engine'):
+            self.tts_engine.stop()
+        if hasattr(self, 'mongo_client'):
+            self.mongo_client.close()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = HealthAssistant(root)
+    
+    def on_closing():
+        app.cleanup()
+        root.destroy()
+    
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+    root.mainloop()
