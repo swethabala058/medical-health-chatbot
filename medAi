@@ -650,7 +650,7 @@ class HealthAssistant:
         """Analyze text for positive or negative sentiment"""
         lower_text = text.lower()
         # Check for common negative phrases first
-        negative_phrases = ['not feeling well', 'not doing well', 'not good', 'not okay', 'not well', 'not fine', 'not happy', 'not great']
+        negative_phrases = ['not feeling well', 'not doing well', 'not good', 'not okay', 'not well', 'not fine', 'not happy', 'not great','not feeling good','not fine','not happy','feeling unwell','feeling bad']
         for phrase in negative_phrases:
             if phrase in lower_text:
                 return {
@@ -816,8 +816,8 @@ class HealthAssistant:
             "Try asking about specific symptoms or health topics!"
         )
 
-    def provide_help(self):
-        """Provide help instructions"""
+        def provide_help(self):
+            """Provide help instructions"""
         return (
             "Here's how to use me effectively:\n"
             "1. Describe symptoms clearly (e.g., 'I have a headache')\n"
@@ -826,23 +826,22 @@ class HealthAssistant:
             "4. Use the microphone button for voice input\n\n"
             "For emergencies, say words like 'emergency' or 'help' immediately."
         )
-    
+
     def analyze_input(self, text):
-        """Analyze user input for intent and entities with enhanced keyword recognition"""
         lower_text = text.lower()
         
-        # Check for medication advice requests first
+        # Medication advice patterns for robust matching
         medication_advice_patterns = [
-            r'shall i take (.) for (.)',
-            r'can i take (.) for (.)',
-            r'is (.) good for (.)',
-            r'should i take (.) for (.)',
-            r'can (.) be taken for (.)',
-            r'is it safe to take (.) for (.)',
-            r'would (.) help with (.)',
-            r'can (.) treat (.)',
-            r'does (.) work for (.)',
-            r'will (.) help (.)'
+            r'shall i take (.*) for (.*)',
+            r'can i take (.*) for (.*)',
+            r'is (.*) good for (.*)',
+            r'should i take (.*) for (.*)',
+            r'can (.*) be taken for (.*)',
+            r'is it safe to take (.*) for (.*)',
+            r'would (.*) help with (.*)',
+            r'can (.*) treat (.*)',
+            r'does (.*) work for (.*)',
+            r'will (.*) help (.*)'
         ]
         
         for pattern in medication_advice_patterns:
@@ -944,6 +943,41 @@ class HealthAssistant:
                 'is_emergency': False
             }
         
+        # Check for exercise questions
+        exercise_keywords = [
+            'exercise', 'workout', 'fitness', 'physical activity',
+            'running', 'walking', 'swimming', 'cycling', 'yoga',
+            'strength training', 'cardio', 'stretch', 'flexibility',
+            'endurance', 'recovery', 'rest', 'active', 'sedentary'
+        ]
+        
+        if any(keyword in lower_text for keyword in exercise_keywords):
+            return {
+                'intent': 'exercise',
+                'is_emergency': False
+            }
+        
+        # Check for mental health questions
+        mental_health_keywords = [
+            'mental health', 'depression', 'anxiety', 'stress',
+            'panic attack', 'mental illness', 'therapy', 'counseling',
+            'psychologist', 'psychiatrist', 'mental', 'emotional',
+            'feeling', 'mood', 'sad', 'happy', 'angry', 'frustrated',
+            'overwhelmed', 'trauma', 'PTSD', 'bipolar', 'schizophrenia',
+            'OCD', 'ADHD', 'autism', 'suicidal', 'self-harm'
+        ]
+        
+        if any(keyword in lower_text for keyword in mental_health_keywords):
+            return {
+                'intent': 'mental_health',
+                'is_emergency': False
+            }
+        
+        # Default to general query if no specific intent detected
+        return {
+            'intent': 'general_query',
+            'is_emergency': False
+        }
         # Check for exercise questions
         exercise_keywords = [
             'exercise', 'workout', 'fitness', 'physical activity',
