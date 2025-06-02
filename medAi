@@ -35,7 +35,25 @@ class HealthAssistant:
         self.root.title("MedAI Pro - Advanced Health Assistant")
         self.root.geometry("800x600")
         self.root.minsize(600, 400)
-        self.root.configure(bg='#f0f2f5')
+        
+        # Modern gray color palette
+        self.colors = {
+            'bg_dark': '#2c3e50',       # Dark blue-gray
+            'bg_medium': '#34495e',     # Medium blue-gray
+            'bg_light': '#ecf0f1',      # Light gray
+            'accent': '#3498db',        # Blue accent
+            'accent_dark': '#2980b9',   # Darker blue
+            'text_dark': '#2c3e50',     # Dark text
+            'text_light': '#ecf0f1',    # Light text
+            'text_muted': '#95a5a6',    # Muted text
+            'success': '#2ecc71',       # Green
+            'warning': '#f39c12',       # Orange
+            'error': '#e74c3c',         # Red
+            'divider': '#bdc3c7'        # Light divider
+        }
+        
+        # Configure root window
+        self.root.configure(bg=self.colors['bg_light'])
         
         # Application state
         self.message_count = 0
@@ -43,12 +61,10 @@ class HealthAssistant:
         self.logged_in = False
         self.current_user_id = None
         self.current_username = None
-
-        # MongoDB setup
-        self.mongo_client = MongoClient("mongodb://localhost:27017/")
-        self.db = self.mongo_client["medai_pro"]
-        self.users_col = self.db["users"]
-        self.conversations_col = self.db["conversations"]
+        self.chat_display = None
+        
+        # Initialize MongoDB with robust error handling
+        self.initialize_database()
         
         # Initialize components
         self.initialize_components()
@@ -269,134 +285,207 @@ class HealthAssistant:
                               'fearful', 'pain', 'hurt', 'sick', 'ill', 'unwell','not feeling well']
 
     def create_ui(self):
-        """Create the main user interface"""
+        """Create the main user interface with modern gray palette"""
         self.setup_main_frame()
         self.setup_header()
         self.setup_chat_display()
         self.setup_input_area()
-    
+        
+        # Show database status after UI is created
+        self.show_database_status()
+
     def setup_main_frame(self):
         """Configure the main application frame"""
-        self.main_frame = tk.Frame(self.root, bg='#f0f2f5')
-        self.main_frame.pack(fill='both', expand=True, padx=5, pady=5)
-    
+        # Create main container with subtle shadow effect
+        self.main_frame = tk.Frame(self.root, bg=self.colors['bg_light'], padx=10, pady=10)
+        self.main_frame.pack(fill='both', expand=True)
+        
+        # Add a subtle shadow effect with nested frames
+        shadow_frame = tk.Frame(self.main_frame, bg=self.colors['text_muted'], padx=1, pady=1)
+        shadow_frame.pack(fill='both', expand=True)
+        
+        # Content frame with rounded corners (simulated with padding)
+        self.content_frame = tk.Frame(shadow_frame, bg=self.colors['bg_light'], padx=2, pady=2)
+        self.content_frame.pack(fill='both', expand=True)
+
     def setup_header(self):
         """Create the application header"""
-        header_frame = tk.Frame(self.main_frame, bg='#ffffff', height=70)
-        header_frame.pack(fill='x', pady=(0, 10))
+        header_frame = tk.Frame(self.content_frame, bg=self.colors['bg_dark'], height=70)
+        header_frame.pack(fill='x')
         header_frame.pack_propagate(False)
         
-        # Application title
+        # Application logo/title with modern font
+        title_frame = tk.Frame(header_frame, bg=self.colors['bg_dark'])
+        title_frame.pack(side='left', padx=20)
+        
         tk.Label(
-            header_frame,
-            text="MedAI Pro",
-            font=('Arial', 18, 'bold'),
-            bg='#ffffff',
-            fg='#2c3e50'
-        ).pack(side='left', padx=20)
+            title_frame,
+            text="MedAI",
+            font=('Arial', 22, 'bold'),
+            bg=self.colors['bg_dark'],
+            fg=self.colors['accent']
+        ).pack(side='left')
+        
+        tk.Label(
+            title_frame,
+            text="Pro",
+            font=('Arial', 22),
+            bg=self.colors['bg_dark'],
+            fg=self.colors['text_light']
+        ).pack(side='left')
+        
+        # Subtitle
+        tk.Label(
+            title_frame,
+            text="Advanced Health Assistant",
+            font=('Arial', 10),
+            bg=self.colors['bg_dark'],
+            fg=self.colors['text_muted']
+        ).pack(side='left', padx=(10, 0))
         
         # User status area
-        self.user_status_frame = tk.Frame(header_frame, bg='#ffffff')
+        self.user_status_frame = tk.Frame(header_frame, bg=self.colors['bg_dark'])
         self.user_status_frame.pack(side='right', padx=20)
         
+        # Login button
         self.login_button = tk.Button(
             self.user_status_frame,
             text="Login",
             command=self.show_auth_dialog,
-            bg='#3498db',
-            fg='white',
-            font=('Arial', 12),
-            padx=15
+            bg=self.colors['accent'],
+            fg=self.colors['text_light'],
+            font=('Arial', 11),
+            padx=15,
+            relief=tk.FLAT,
+            activebackground=self.colors['accent_dark'],
+            activeforeground=self.colors['text_light']
         )
-        self.login_button.pack(side='left')
+        self.login_button.pack(side='left', padx=(0, 5))
         
+        # Signup button (initially visible)
+        self.signup_button = tk.Button(
+            self.user_status_frame,
+            text="Sign Up",
+            command=lambda: self.show_auth_dialog(mode='signup'),
+            bg=self.colors['success'],
+            fg=self.colors['text_light'],
+            font=('Arial', 11),
+            padx=15,
+            relief=tk.FLAT,
+            activebackground='#27ae60',  # Darker green on hover
+            activeforeground=self.colors['text_light']
+        )
+        self.signup_button.pack(side='left')
+        
+        # User label (initially showing "Guest")
         self.user_label = tk.Label(
             self.user_status_frame,
             text="Guest",
-            font=('Arial', 12),
-            bg='#ffffff',
-            fg='#7f8c8d'
+            font=('Arial', 11),
+            bg=self.colors['bg_dark'],
+            fg=self.colors['text_muted']
         )
         self.user_label.pack(side='left', padx=10)
-    
+
     def setup_chat_display(self):
         """Configure the chat display area"""
+        # Chat container with subtle border
+        chat_container = tk.Frame(
+            self.content_frame,
+            bg=self.colors['bg_light'],
+            padx=2,
+            pady=2
+        )
+        chat_container.pack(fill='both', expand=True, pady=1)
+        
+        # Chat display with custom styling
         self.chat_display = scrolledtext.ScrolledText(
-            self.main_frame,
+            chat_container,
             wrap=tk.WORD,
             state='disabled',
-            font=('Arial', 12),
-            bg='#ffffff',
-            fg='#2c3e50',
+            font=('Arial', 11),
+            bg='white',
+            fg=self.colors['text_dark'],
             padx=15,
             pady=15,
             borderwidth=0,
-            insertbackground='#3498db'
+            insertbackground=self.colors['accent']
         )
         self.chat_display.pack(fill='both', expand=True)
         
         # Configure message styling
         self.configure_message_tags()
-    
+
     def configure_message_tags(self):
         """Set up text tags for different message types"""
-        self.chat_display.tag_config('assistant', foreground='#2c3e50', lmargin1=20, rmargin=20)
-        self.chat_display.tag_config('user', foreground='#3498db', lmargin1=20, rmargin=20, justify='right')
-        self.chat_display.tag_config('system', foreground='#7f8c8d', font=('Arial', 10))
-        self.chat_display.tag_config('emergency', foreground='#e74c3c', font=('Arial', 12, 'bold'))
-        self.chat_display.tag_config('warning', foreground='#f39c12')
-        self.chat_display.tag_config('timestamp', foreground='#95a5a6', font=('Arial', 9))
-        self.chat_display.tag_config('divider', foreground='#ecf0f1')
-        self.chat_display.tag_config('empathy', foreground='#9b59b6', font=('Arial', 12, 'italic'))
-    
+        self.chat_display.tag_config('assistant', foreground=self.colors['text_dark'], lmargin1=20, rmargin=20)
+        self.chat_display.tag_config('user', foreground=self.colors['accent'], lmargin1=20, rmargin=20, justify='right')
+        self.chat_display.tag_config('system', foreground=self.colors['text_muted'], font=('Arial', 9))
+        self.chat_display.tag_config('emergency', foreground=self.colors['error'], font=('Arial', 11, 'bold'))
+        self.chat_display.tag_config('warning', foreground=self.colors['warning'])
+        self.chat_display.tag_config('timestamp', foreground=self.colors['text_muted'], font=('Arial', 8))
+        self.chat_display.tag_config('timestamp_right', foreground=self.colors['text_muted'], font=('Arial', 8), justify='right')
+        self.chat_display.tag_config('divider', foreground=self.colors['divider'])
+        self.chat_display.tag_config('empathy', foreground='#9b59b6', font=('Arial', 11, 'italic'))
+
     def setup_input_area(self):
         """Create the message input area"""
-        input_frame = tk.Frame(self.main_frame, bg='#f0f2f5')
-        input_frame.pack(fill='x', pady=(10, 0))
+        # Input container with subtle shadow
+        input_container = tk.Frame(self.content_frame, bg=self.colors['bg_medium'], padx=2, pady=2)
+        input_container.pack(fill='x', pady=(1, 0))
         
-        # Message entry
+        input_frame = tk.Frame(input_container, bg=self.colors['bg_medium'], padx=10, pady=10)
+        input_frame.pack(fill='x')
+        
+        # Message entry with rounded appearance
+        entry_frame = tk.Frame(input_frame, bg='white', padx=2, pady=2, bd=0, highlightthickness=1, highlightbackground=self.colors['divider'])
+        entry_frame.pack(side='left', fill='x', expand=True, padx=(0, 10))
+        
         self.user_input = tk.Entry(
-            input_frame,
-            font=('Arial', 12),
-            bg='#ffffff',
-            fg='#2c3e50',
-            insertbackground='#3498db',
-            relief=tk.FLAT
+            entry_frame,
+            font=('Arial', 11),
+            bg='white',
+            fg=self.colors['text_dark'],
+            insertbackground=self.colors['accent'],
+            relief=tk.FLAT,
+            bd=8  # Internal padding
         )
-        self.user_input.pack(
-            side='left',
-            fill='x',
-            expand=True,
-            padx=(0, 5),
-            ipady=8
-        )
+        self.user_input.pack(fill='x', expand=True)
         self.user_input.bind('<Return>', self.process_input)
+        
+        # Button frame for consistent spacing
+        button_frame = tk.Frame(input_frame, bg=self.colors['bg_medium'])
+        button_frame.pack(side='right')
+        
+        # Voice input button
+        self.voice_button = tk.Button(
+            button_frame,
+            text="🎤",
+            command=self.start_voice_input,
+            bg=self.colors['bg_dark'],
+            fg=self.colors['text_light'],
+            width=3,
+            font=('Arial', 11),
+            relief=tk.FLAT,
+            activebackground=self.colors['bg_medium'],
+            activeforeground=self.colors['text_light']
+        )
+        self.voice_button.pack(side='left', padx=5)
         
         # Send button
         tk.Button(
-            input_frame,
+            button_frame,
             text="Send",
             command=self.process_input,
-            bg='#3498db',
-            fg='white',
-            font=('Arial', 12),
+            bg=self.colors['accent'],
+            fg=self.colors['text_light'],
+            font=('Arial', 11),
+            padx=15,
             relief=tk.FLAT,
-            activebackground='#2980b9'
-        ).pack(side='right')
-        
-        # Voice input button
-        tk.Button(
-            input_frame,
-            text="🎤",
-            command=self.start_voice_input,
-            bg='#9b59b6',
-            fg='white',
-            width=3,
-            font=('Arial', 12),
-            relief=tk.FLAT,
-            activebackground='#8e44ad'
-        ).pack(side='right', padx=5)
-    
+            activebackground=self.colors['accent_dark'],
+            activeforeground=self.colors['text_light']
+        ).pack(side='left')
+
     def load_conversation_history(self):
         """Load and display the full conversation history from MongoDB."""
         try:
@@ -422,42 +511,71 @@ class HealthAssistant:
             self.add_message("System", "Error loading conversation history.", tag='warning', speak=False)
 
     def show_welcome_message(self):
-        """Display welcome message when app starts and load conversation history."""
-        welcome_messages = [
-            "👋 Hello! I'm your health assistant. How can I help you today?",
-            "👋 Hi there! Ready to assist with your health questions.",
-            "👋 Welcome to MedAI Pro. How are you feeling today?"
-        ]
-
-        self.add_message(
-            "Health Assistant",
-            random.choice(welcome_messages),
-            tag='assistant'
+        """Display welcome message when app starts"""
+        welcome_message = (
+            "Welcome to MedAI Pro! 👋\n\n"
+            "I'm your personal health assistant, designed to provide general health information "
+            "and guidance. You can ask me about symptoms, medications, or general health topics.\n\n"
+            "Please note that I'm not a replacement for professional medical advice. "
+            "Always consult with a healthcare provider for serious concerns."
         )
-
-        # Load conversation history
-        self.load_conversation_history()
-    
+        
+        self.add_message("Health Assistant", welcome_message)
+        
+        # Show database status
+        if hasattr(self, 'mongo_client') and self.mongo_client:
+            self.add_message(
+                "System", 
+                "Database connected successfully", 
+                tag='system', 
+                speak=False
+            )    
     def add_message(self, sender, message, tag=None, speak=True):
         """Add a message to the chat display with proper formatting"""
+        # Check if chat_display is initialized
+        if self.chat_display is None:
+            logging.info(f"Message queued (chat not ready): {sender}: {message}")
+            return
+        
         self.chat_display.config(state='normal')
         
-        # Add timestamp
+        # Add timestamp - position depends on sender
         timestamp = datetime.now().strftime("%H:%M")
-        self.chat_display.insert(tk.END, f"[{timestamp}] ", 'timestamp')
         
         # Determine message styling
         if tag:
             message_tag = tag
         elif sender == "You":
             message_tag = 'user'
+            # Add some spacing before user messages
+            self.chat_display.insert(tk.END, "\n", 'user')
         elif sender == "System":
             message_tag = 'system'
         else:
             message_tag = 'assistant'
         
-        # Add the message
-        self.chat_display.insert(tk.END, f"{sender}: {message}\n", message_tag)
+        # Format message differently based on sender
+        if sender == "You":
+            # For user messages, put timestamp on the right
+            self.chat_display.insert(tk.END, f"{sender}: ", message_tag)
+            self.chat_display.insert(tk.END, f"{message} ", message_tag)
+            self.chat_display.insert(tk.END, f"[{timestamp}]", 'timestamp_right')
+            self.chat_display.insert(tk.END, "\n", message_tag)
+        elif sender == "System":
+            # For system messages
+            self.chat_display.insert(tk.END, f"[{timestamp}] ", 'timestamp')
+            self.chat_display.insert(tk.END, f"ℹ️ {sender}: ", message_tag)
+            self.chat_display.insert(tk.END, f"{message}\n", message_tag)
+        elif sender == "Health Assistant":
+            # For assistant messages
+            self.chat_display.insert(tk.END, f"[{timestamp}] ", 'timestamp')
+            self.chat_display.insert(tk.END, f"🤖 {sender}: ", message_tag)
+            self.chat_display.insert(tk.END, f"{message}\n", message_tag)
+        else:
+            # For other messages
+            self.chat_display.insert(tk.END, f"[{timestamp}] ", 'timestamp')
+            self.chat_display.insert(tk.END, f"{sender}: ", message_tag)
+            self.chat_display.insert(tk.END, f"{message}\n", message_tag)
         
         # Add divider
         self.chat_display.insert(tk.END, "-"*50 + "\n", 'divider')
@@ -715,16 +833,16 @@ class HealthAssistant:
         
         # Check for medication advice requests first
         medication_advice_patterns = [
-            r'shall i take (.*) for (.*)',
-            r'can i take (.*) for (.*)',
-            r'is (.*) good for (.*)',
-            r'should i take (.*) for (.*)',
-            r'can (.*) be taken for (.*)',
-            r'is it safe to take (.*) for (.*)',
-            r'would (.*) help with (.*)',
-            r'can (.*) treat (.*)',
-            r'does (.*) work for (.*)',
-            r'will (.*) help (.*)'
+            r'shall i take (.) for (.)',
+            r'can i take (.) for (.)',
+            r'is (.) good for (.)',
+            r'should i take (.) for (.)',
+            r'can (.) be taken for (.)',
+            r'is it safe to take (.) for (.)',
+            r'would (.) help with (.)',
+            r'can (.) treat (.)',
+            r'does (.) work for (.)',
+            r'will (.) help (.)'
         ]
         
         for pattern in medication_advice_patterns:
@@ -1038,17 +1156,57 @@ class HealthAssistant:
         )
 
     def start_voice_input(self):
-        """Start voice input using microphone"""
-        self.add_message("System", "Listening... Speak now", tag='system', speak=False)
+        """Start voice input using microphone with visual feedback"""
+        # Disable input while listening
+        self.user_input.config(state='disabled')
+        
+        # Change button color to indicate listening
+        voice_button = self.voice_button
+        original_bg = voice_button.cget('bg')
+        voice_button.config(bg='#e74c3c')  # Red to indicate recording
+        
+        # Add listening indicator message
+        self.add_message("System", "🎤 Listening... Speak now", tag='system', speak=False)
         
         def recognize_thread():
             try:
                 with sr.Microphone() as source:
-                    self.voice_recognizer.adjust_for_ambient_noise(source)
-                    audio = self.voice_recognizer.listen(source, timeout=5)
-                
-                text = self.voice_recognizer.recognize_google(audio)
-                self.root.after(0, lambda: self.process_voice_input(text))
+                    # Show adjusting message
+                    self.root.after(0, lambda: self.add_message(
+                        "System", 
+                        "Adjusting for background noise...", 
+                        tag='system', 
+                        speak=False
+                    ))
+                    
+                    # Adjust for ambient noise
+                    self.voice_recognizer.adjust_for_ambient_noise(source, duration=1)
+                    
+                    # Show ready message
+                    self.root.after(0, lambda: self.add_message(
+                        "System", 
+                        "Ready! Listening for up to 5 seconds...", 
+                        tag='system', 
+                        speak=False
+                    ))
+                    
+                    # Listen for audio
+                    audio = self.voice_recognizer.listen(source, timeout=5, phrase_time_limit=5)
+                    
+                    # Show processing message
+                    self.root.after(0, lambda: self.add_message(
+                        "System", 
+                        "Processing your speech...", 
+                        tag='system', 
+                        speak=False
+                    ))
+                    
+                    # Use Google's speech recognition
+                    text = self.voice_recognizer.recognize_google(audio)
+                    
+                    # Process the recognized text
+                    self.root.after(0, lambda: self.process_voice_input(text))
+                    
             except sr.WaitTimeoutError:
                 self.root.after(0, lambda: self.add_message(
                     "System",
@@ -1059,26 +1217,44 @@ class HealthAssistant:
             except sr.UnknownValueError:
                 self.root.after(0, lambda: self.add_message(
                     "System",
-                    "Could not understand audio. Please try again.",
+                    "Could not understand audio. Please try again or type your message.",
                     tag='warning',
                     speak=False
                 ))
             except Exception as e:
-                logging.error(f"Voice recognition failed: {str(e)}")
+                # Capture the error message before passing to lambda
+                error_message = str(e)
+                logging.error(f"Voice recognition failed: {error_message}")
+                
+                # Use the captured message in the lambda
                 self.root.after(0, lambda: self.add_message(
                     "System",
-                    "Error in voice recognition. Please try typing instead.",
+                    f"Error in voice recognition: {error_message}. Please try typing instead.",
                     tag='warning',
                     speak=False
                 ))
+            finally:
+                # Re-enable input and reset button color
+                self.root.after(0, lambda: self.user_input.config(state='normal'))
+                self.root.after(0, lambda: voice_button.config(bg=original_bg))
         
+        # Start recognition in a separate thread
         threading.Thread(target=recognize_thread, daemon=True).start()
 
     def process_voice_input(self, text):
         """Process recognized voice input"""
-        self.add_message("System", f"Recognized: {text}", tag='system', speak=False)
+        if not text:
+            self.add_message("System", "No speech detected. Please try again.", tag='warning', speak=False)
+            return
+        
+        # Show the recognized text
+        self.add_message("System", f"Recognized: \"{text}\"", tag='system', speak=False)
+        
+        # Insert recognized text into input field
         self.user_input.delete(0, tk.END)
         self.user_input.insert(0, text)
+        
+        # Process the input
         self.process_input()
 
     def speak(self, text):
@@ -1093,56 +1269,94 @@ class HealthAssistant:
         """Show authentication dialog (login or signup)"""
         dialog = tk.Toplevel(self.root)
         dialog.title("Login" if mode == 'login' else "Sign Up")
-        dialog.geometry("400x300")
+        dialog.geometry("400x400")  # Increased height
         dialog.resizable(False, False)
+        dialog.configure(bg=self.colors['bg_light'])
         dialog.grab_set()
         
+        # Header
+        header_frame = tk.Frame(dialog, bg=self.colors['bg_dark'], height=60)
+        header_frame.pack(fill='x')
+        header_frame.pack_propagate(False)
+        
         tk.Label(
-            dialog,
-            text="Username:",
-            font=('Arial', 12)
-        ).pack(pady=(20, 5))
+            header_frame,
+            text="Login" if mode == 'login' else "Create Account",
+            font=('Arial', 16),
+            bg=self.colors['bg_dark'],
+            fg=self.colors['text_light']
+        ).pack(side='left', padx=20, pady=10)
+        
+        # Main content frame
+        main_frame = tk.Frame(dialog, bg=self.colors['bg_light'])
+        main_frame.pack(fill='both', expand=True, padx=30, pady=20)
+        
+        # Username field
+        tk.Label(
+            main_frame,
+            text="Username",
+            font=('Arial', 11),
+            bg=self.colors['bg_light'],
+            fg=self.colors['text_dark'],
+            anchor='w'
+        ).pack(fill='x', pady=(10, 5))
         
         username_entry = tk.Entry(
-            dialog,
-            font=('Arial', 12)
+            main_frame,
+            font=('Arial', 11),
+            bd=1
         )
-        username_entry.pack()
+        username_entry.pack(fill='x', pady=(0, 15))
         
+        # Password field
         tk.Label(
-            dialog,
-            text="Password:",
-            font=('Arial', 12)
-        ).pack(pady=(10, 5))
+            main_frame,
+            text="Password",
+            font=('Arial', 11),
+            bg=self.colors['bg_light'],
+            fg=self.colors['text_dark'],
+            anchor='w'
+        ).pack(fill='x', pady=(0, 5))
         
         password_entry = tk.Entry(
-            dialog,
-            font=('Arial', 12),
-            show="*"
+            main_frame,
+            font=('Arial', 11),
+            bd=1,
+            show="•"
         )
-        password_entry.pack()
+        password_entry.pack(fill='x', pady=(0, 15))
         
+        # Email field (for signup only)
         if mode == 'signup':
             tk.Label(
-                dialog,
-                text="Email:",
-                font=('Arial', 12)
-            ).pack(pady=(10, 5))
+                main_frame,
+                text="Email",
+                font=('Arial', 11),
+                bg=self.colors['bg_light'],
+                fg=self.colors['text_dark'],
+                anchor='w'
+            ).pack(fill='x', pady=(0, 5))
             
             email_entry = tk.Entry(
-                dialog,
-                font=('Arial', 12)
+                main_frame,
+                font=('Arial', 11),
+                bd=1
             )
-            email_entry.pack()
+            email_entry.pack(fill='x', pady=(0, 15))
         
+        # Error message label
         error_label = tk.Label(
-            dialog,
+            main_frame,
             text="",
-            fg='red',
-            font=('Arial', 10)
+            fg=self.colors['error'],
+            bg=self.colors['bg_light'],
+            font=('Arial', 10),
+            wraplength=340,
+            justify='center'
         )
-        error_label.pack(pady=10)
+        error_label.pack(pady=5)
         
+        # Submit function
         def submit():
             username = username_entry.get().strip()
             password = password_entry.get().strip()
@@ -1179,26 +1393,45 @@ class HealthAssistant:
                 else:
                     error_label.config(text=message)
         
-        tk.Button(
-            dialog,
-            text="Submit",
+        # Create a prominent blue submit button
+        submit_button = tk.Button(
+            main_frame,
+            text="SUBMIT",
             command=submit,
-            font=('Arial', 12),
-            width=15
-        ).pack(pady=10)
+            bg="#3498db",  # Bright blue
+            fg="white",
+            font=('Arial', 14, 'bold'),
+            padx=20,
+            pady=10,
+            relief=tk.RAISED,
+            bd=3,
+            activebackground="#2980b9",  # Darker blue on hover
+            activeforeground="white",
+            cursor="hand2"
+        )
+        submit_button.pack(fill='x', pady=20)
+        
+        # Separator
+        separator = tk.Frame(main_frame, height=2, bg=self.colors['divider'])
+        separator.pack(fill='x', pady=10)
         
         # Switch between login and signup
-        switch_text = "Sign up instead" if mode == 'login' else "Login instead"
+        switch_text = "Need an account? Sign up" if mode == 'login' else "Already have an account? Login"
         switch_mode = 'signup' if mode == 'login' else 'login'
         
-        tk.Button(
-            dialog,
+        switch_button = tk.Button(
+            main_frame,
             text=switch_text,
             command=lambda: [dialog.destroy(), self.show_auth_dialog(switch_mode)],
-            font=('Arial', 10),
-            fg='blue',
-            borderwidth=0
-        ).pack()
+            font=('Arial', 11, 'underline'),
+            fg="#2980b9",
+            bg=self.colors['bg_light'],
+            bd=0,
+            activeforeground="#1a5276",
+            activebackground=self.colors['bg_light'],
+            cursor="hand2"
+        )
+        switch_button.pack(pady=5)
 
     def hash_password(self, password, salt=None):
         """Hash password with salt using PBKDF2"""
@@ -1235,8 +1468,27 @@ class HealthAssistant:
             self.logged_in = True
             self.current_user_id = str(result.inserted_id)
             self.current_username = username
+            
+            # Update UI to show logged-in state
             self.user_label.config(text=username)
-            self.login_button.config(text="Logout", command=self.logout_user)
+            self.login_button.pack_forget()  # Hide login button
+            self.signup_button.pack_forget()  # Hide signup button
+            
+            # Add logout button
+            self.logout_button = tk.Button(
+                self.user_status_frame,
+                text="Logout",
+                command=self.logout_user,
+                bg=self.colors['warning'],
+                fg=self.colors['text_light'],
+                font=('Arial', 11),
+                padx=15,
+                relief=tk.FLAT,
+                activebackground='#d35400',  # Darker orange on hover
+                activeforeground=self.colors['text_light']
+            )
+            self.logout_button.pack(side='left', before=self.user_label)
+            
             return True, "Signup successful"
         except Exception as e:
             logging.error(f"Signup failed: {str(e)}")
@@ -1254,8 +1506,28 @@ class HealthAssistant:
             self.logged_in = True
             self.current_user_id = str(user_doc["_id"])
             self.current_username = user_doc["username"]
+            
+            # Update UI to show logged-in state
             self.user_label.config(text=user_doc["username"])
-            self.login_button.config(text="Logout", command=self.logout_user)
+            self.login_button.pack_forget()  # Hide login button
+            self.signup_button.pack_forget()  # Hide signup button
+            
+            # Add logout button
+            self.logout_button = tk.Button(
+                self.user_status_frame,
+                text="Logout",
+                command=self.logout_user,
+                bg=self.colors['warning'],
+                fg=self.colors['text_light'],
+                font=('Arial', 11),
+                padx=15,
+                relief=tk.FLAT,
+                activebackground='#d35400',  # Darker orange on hover
+                activeforeground=self.colors['text_light']
+            )
+            self.logout_button.pack(side='left', before=self.user_label)
+            
+            # Update database with login time
             self.users_col.update_one(
                 {"_id": user_doc["_id"]},
                 {"$set": {"last_login": datetime.now()}}
@@ -1270,8 +1542,18 @@ class HealthAssistant:
         self.logged_in = False
         self.current_user_id = None
         self.current_username = None
+        
+        # Update UI to show logged-out state
         self.user_label.config(text="Guest")
-        self.login_button.config(text="Login", command=self.show_auth_dialog)
+        
+        # Remove logout button
+        if hasattr(self, 'logout_button'):
+            self.logout_button.pack_forget()
+        
+        # Show login and signup buttons again
+        self.login_button.pack(side='left', padx=(0, 5))
+        self.signup_button.pack(side='left')
+        
         self.add_message("System", "You have been logged out", tag='system')
 
     def cleanup(self):
@@ -1280,6 +1562,101 @@ class HealthAssistant:
             self.tts_engine.stop()
         if hasattr(self, 'mongo_client'):
             self.mongo_client.close()
+
+    def initialize_database(self):
+        """Initialize MongoDB connection with robust error handling"""
+        try:
+            # Connection parameters - update these as needed
+            mongo_host = "localhost"
+            mongo_port = 27017
+            mongo_db_name = "medai_pro"
+            connection_string = f"mongodb://{mongo_host}:{mongo_port}/"
+            
+            logging.info(f"Attempting to connect to MongoDB at {connection_string}")
+            
+            # Try to connect to MongoDB with timeout
+            self.mongo_client = MongoClient(
+                connection_string,
+                serverSelectionTimeoutMS=5000,  # 5 second timeout
+                connectTimeoutMS=5000,
+                socketTimeoutMS=5000
+            )
+            
+            # Test the connection by requesting server info
+            server_info = self.mongo_client.server_info()
+            logging.info(f"Connected to MongoDB version: {server_info.get('version', 'unknown')}")
+            
+            # Set up database and collections
+            self.db = self.mongo_client[mongo_db_name]
+            self.users_col = self.db["users"]
+            self.conversations_col = self.db["conversations"]
+            
+            # Create indexes for better performance if they don't exist
+            self.users_col.create_index([("username", 1)], unique=True)
+            self.users_col.create_index([("email", 1)], unique=True)
+            self.conversations_col.create_index([("user_id", 1), ("timestamp", 1)])
+            
+            logging.info("MongoDB connection established successfully")
+            return True
+            
+        except Exception as e:
+            error_msg = f"MongoDB connection failed: {str(e)}"
+            logging.error(error_msg)
+            print(f"Database connection error: {error_msg}")
+            
+            # Create dummy collections that won't crash the app
+            self.mongo_client = None
+            self.db = None
+            
+            # Define a DummyCollection class for offline operation
+            class DummyCollection:
+                def __init__(self, name):
+                    self.name = name
+                
+                def find_one(self, *args, **kwargs):
+                    logging.debug(f"Dummy find_one called on {self.name}")
+                    return None
+                
+                def find(self, *args, **kwargs):
+                    logging.debug(f"Dummy find called on {self.name}")
+                    return []
+                
+                def insert_one(self, *args, **kwargs):
+                    logging.debug(f"Dummy insert_one called on {self.name}")
+                    return type('obj', (object,), {'inserted_id': None})
+                
+                def update_one(self, *args, **kwargs):
+                    logging.debug(f"Dummy update_one called on {self.name}")
+                    return
+                
+                def create_index(self, *args, **kwargs):
+                    logging.debug(f"Dummy create_index called on {self.name}")
+                    return
+                
+                def list_indexes(self, *args, **kwargs):
+                    logging.debug(f"Dummy list_indexes called on {self.name}")
+                    return []
+            
+            self.users_col = DummyCollection("users")
+            self.conversations_col = DummyCollection("conversations")
+            return False
+
+    def show_database_status(self):
+        """Show database connection status after UI is created"""
+        if hasattr(self, 'mongo_client') and self.mongo_client:
+            self.add_message(
+                "System", 
+                "Database connected successfully", 
+                tag='system', 
+                speak=False
+            )
+        else:
+            self.add_message(
+                "System", 
+                "Database connection failed. Some features may not be available.", 
+                tag='warning', 
+                speak=False
+            )
 
 if __name__ == "__main__":
     root = tk.Tk()
